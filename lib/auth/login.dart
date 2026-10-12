@@ -5,6 +5,15 @@ import 'signup.dart';
 import '../main/HomeScreen.dart'; // Adjust the import based on your project structure
 import '../helpers/databaseHelper.dart'; // Import DatabaseHelper
 
+/// Replaces the whole navigation stack with the login screen.
+void navigateToLogin(BuildContext context) {
+  Navigator.pushAndRemoveUntil(
+    context,
+    MaterialPageRoute(builder: (_) => const LoginScreen()),
+    (Route<dynamic> route) => false,
+  );
+}
+
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -64,6 +73,7 @@ class _LoginScreenState extends State<LoginScreen> {
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('loggedInEmail', email);
           print('Saved loggedInEmail: $email'); // Debug log
+          if (!mounted) return;
 
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Login successful')),
@@ -75,11 +85,13 @@ class _LoginScreenState extends State<LoginScreen> {
             (Route<dynamic> route) => false,
           );
         } else {
+          if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Invalid email or password')),
           );
         }
       } catch (e) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error during login: $e')),
         );

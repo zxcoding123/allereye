@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 
+import '../auth/login.dart';
 import '../helpers/databaseHelper.dart'; // Import DatabaseHelper
 
 class ProfileScreen extends StatefulWidget {
@@ -76,6 +77,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (email != null) {
       try {
         final user = await DatabaseHelper.instance.getUserByEmail(email);
+        if (!mounted) return;
         if (user != null) {
           final allergensMap =
               jsonDecode(user['allergens'] ?? '{}') as Map<String, dynamic>;
@@ -104,18 +106,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('User data not found')),
           );
-          Navigator.pushReplacementNamed(context, '/login');
+          navigateToLogin(context);
         }
       } catch (e) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error loading profile: $e')),
         );
       }
     } else {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No logged-in user found')),
       );
-      Navigator.pushReplacementNamed(context, '/login');
+      navigateToLogin(context);
     }
   }
 
@@ -166,6 +170,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         };
 
         await DatabaseHelper.instance.updateSignUpData(data);
+        if (!mounted) return;
 
         setState(() {
           _isEditing = false;
@@ -175,15 +180,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SnackBar(content: Text('Profile updated')),
         );
       } catch (e) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error saving profile: $e')),
         );
       }
     } else {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No logged-in user found')),
       );
-      Navigator.pushReplacementNamed(context, '/login');
+      navigateToLogin(context);
     }
   }
 
@@ -203,25 +210,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = ColorScheme.fromSwatch(
-      primarySwatch: MaterialColor(
-        0xFF6994C6,
-        {
-          50: const Color(0xFFE6ECF5),
-          100: const Color(0xFFC3D3E7),
-          200: const Color(0xFF9CB7D8),
-          300: const Color(0xFF759BC8),
-          400: const Color(0xFF6994C6),
-          500: const Color(0xFF5A85B9),
-          600: const Color(0xFF5278A8),
-          700: const Color(0xFF486895),
-          800: const Color(0xFF3E5983),
-          900: const Color(0xFF2E4163),
-        },
-      ),
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      errorColor: Theme.of(context).colorScheme.error,
-    );
+    final colorScheme = Theme.of(context).colorScheme;
 
     return Theme(
       data: Theme.of(context).copyWith(colorScheme: colorScheme),

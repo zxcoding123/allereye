@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'helpers/appSettings.dart';
 import 'main/HomeScreen.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await AppSettings.instance.load();
   runApp(const MyApp());
 }
 
@@ -10,12 +13,23 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      theme: ThemeData(
-        fontFamily: 'GlacialIndifference',
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.grey),
+    final settings = AppSettings.instance;
+    return ListenableBuilder(
+      listenable: settings,
+      builder: (context, _) => MaterialApp(
+        theme: settings.theme,
+        // Apply the in-app font size on top of the system text scale.
+        builder: (context, child) {
+          final systemScale = MediaQuery.textScalerOf(context).scale(1);
+          return MediaQuery(
+            data: MediaQuery.of(context).copyWith(
+              textScaler: TextScaler.linear(systemScale * settings.textScale),
+            ),
+            child: child!,
+          );
+        },
+        home: const HomeScreen(),
       ),
-      home: const HomeScreen(),
     );
   }
 }

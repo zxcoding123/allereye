@@ -109,11 +109,12 @@ class _AllergenProfileScreenState extends State<AllergenProfileScreen> {
   Future<void> _loadUserData() async {
     final prefs = await SharedPreferences.getInstance();
     final email = prefs.getString('loggedInEmail');
-    final scansJson = prefs.getString('recentScans');
 
     if (email != null) {
       try {
         final user = await DatabaseHelper.instance.getUserByEmail(email);
+        final scanRows = await DatabaseHelper.instance.getRecentScans(email);
+        if (!mounted) return;
         if (user != null) {
           final allergensMap =
               jsonDecode(user['allergens'] ?? '{}') as Map<String, dynamic>;
@@ -121,34 +122,26 @@ class _AllergenProfileScreenState extends State<AllergenProfileScreen> {
             for (var allergen in _allergens.keys) {
               _allergens[allergen] = allergensMap[allergen] ?? false;
             }
-            if (scansJson != null) {
-              final List<dynamic> scansList = jsonDecode(scansJson);
-              _recentScans =
-                  scansList.map((json) => Scan.fromJson(json)).toList();
-            }
+            _recentScans = scanRows.map(Scan.fromRow).toList();
           });
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('User data not found')),
           );
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const LoginScreen()),
-          );
+          navigateToLogin(context);
         }
       } catch (e) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error loading allergen profile: $e')),
         );
       }
     } else {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No logged-in user found')),
       );
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => const LoginScreen()),
-      );
+      navigateToLogin(context);
     }
   }
 
@@ -181,6 +174,7 @@ class _AllergenProfileScreenState extends State<AllergenProfileScreen> {
           };
 
           await DatabaseHelper.instance.insertSignUpData(data);
+          if (!mounted) return;
 
           setState(() {
             _isEditing = false;
@@ -190,45 +184,30 @@ class _AllergenProfileScreenState extends State<AllergenProfileScreen> {
             const SnackBar(content: Text('Allergen profile updated')),
           );
         } else {
+          if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('User data not found')),
           );
-          Navigator.pushReplacementNamed(context, '/login');
+          navigateToLogin(context);
         }
       } catch (e) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error saving allergens: $e')),
         );
       }
     } else {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No logged-in user found')),
       );
-      Navigator.pushReplacementNamed(context, '/login');
+      navigateToLogin(context);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = ColorScheme.fromSwatch(
-      primarySwatch: MaterialColor(
-        0xFF6994C6,
-        {
-          50: const Color(0xFFE6ECF5),
-          100: const Color(0xFFC3D3E7),
-          200: const Color(0xFF9CB7D8),
-          300: const Color(0xFF759BC8),
-          400: const Color(0xFF6994C6),
-          500: const Color(0xFF5A85B9),
-          600: const Color(0xFF5278A8),
-          700: const Color(0xFF486895),
-          800: const Color(0xFF3E5983),
-          900: const Color(0xFF2E4163),
-        },
-      ),
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      errorColor: Theme.of(context).colorScheme.error,
-    );
+    final colorScheme = Theme.of(context).colorScheme;
 
     final selectedAllergens = _allergens.entries
         .where((entry) => entry.value)

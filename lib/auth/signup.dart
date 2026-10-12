@@ -131,6 +131,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
       // Save to database
       try {
         await DatabaseHelper.instance.insertSignUpData(data);
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Sign-up saved offline succesfully!'),
@@ -144,6 +145,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
           (Route<dynamic> route) => false, // Remove all previous routes
         );
       } catch (e) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error saving data: $e')),
         );
@@ -171,25 +173,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = ColorScheme.fromSwatch(
-      primarySwatch: MaterialColor(
-        0xFF6994C6,
-        {
-          50: const Color(0xFFE6ECF5),
-          100: const Color(0xFFC3D3E7),
-          200: const Color(0xFF9CB7D8),
-          300: const Color(0xFF759BC8),
-          400: const Color(0xFF6994C6),
-          500: const Color(0xFF5A85B9),
-          600: const Color(0xFF5278A8),
-          700: const Color(0xFF486895),
-          800: const Color(0xFF3E5983),
-          900: const Color(0xFF2E4163),
-        },
-      ),
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      errorColor: Theme.of(context).colorScheme.error,
-    );
+    final colorScheme = Theme.of(context).colorScheme;
 
     return Theme(
       data: Theme.of(context).copyWith(colorScheme: colorScheme),

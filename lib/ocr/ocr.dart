@@ -5,9 +5,21 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
+import '../helpers/allergenMatcher.dart';
+import '../helpers/appSettings.dart';
 import '../helpers/databaseHelper.dart';
 import '../auth/login.dart';
 import '../main/HomeScreen.dart'; // For Scan class
+
+enum ScanStatus {
+  idle,
+  noProfile,
+  unreadable,
+  noIngredientList,
+  safe,
+  caution,
+  danger,
+}
 
 class OcrScreen extends StatefulWidget {
   const OcrScreen({super.key});
@@ -18,29 +30,15 @@ class OcrScreen extends StatefulWidget {
 
 class _OcrScreenState extends State<OcrScreen> {
   XFile? _image;
-  String _recognizedText = '';
   String _productName = '';
   List<String> _foundAllergens = [];
+  List<String> _mayContainAllergens = [];
   List<String> _userAllergens = [];
-  final Map<String, List<String>> _allergenSynonyms = {
-    'Peanuts': ['peanut', 'groundnut'],
-    'Gluten': ['gluten', 'wheat', 'barley', 'rye'],
-    'Dairy': ['milk', 'cheese', 'yogurt', 'lactose'],
-    'Shellfish': ['shrimp', 'crab', 'lobster', 'prawn'],
-    'Eggs': ['egg', 'albumin'],
-    'Soy': ['soy', 'soya', 'soybean'],
-    'Tree Nuts': ['almond', 'walnut', 'cashew', 'hazelnut'],
-    'Wheat': ['wheat', 'flour'],
-    'Fish': ['fish', 'salmon', 'tuna', 'cod'],
-    'Sesame': ['sesame', 'tahini'],
-    'Mustard': ['mustard', 'mustard seed'],
-    'Lupin': ['lupin', 'lupine'],
-    'Celery': ['celery', 'celeriac'],
-    'Mollusks': ['clam', 'mussel', 'oyster', 'squid'],
-    'Sulfites': ['sulfite', 'sulphite', 'sulfur dioxide'],
-  };
+  List<String> _otherAllergens = [];
+  ScanStatus _status = ScanStatus.idle;
   final TextRecognizer _textRecognizer = TextRecognizer();
   final ImagePicker _picker = ImagePicker();
+  final FlutterTts _tts = FlutterTts();
 
   @override
   void initState() {
@@ -51,6 +49,7 @@ class _OcrScreenState extends State<OcrScreen> {
   @override
   void dispose() {
     _textRecognizer.close();
+    _tts.stop();
     super.dispose();
   }
 
@@ -63,6 +62,7 @@ class _OcrScreenState extends State<OcrScreen> {
       try {
         final user = await DatabaseHelper.instance.getUserByEmail(email);
         print('OcrScreen: user: $user'); // Debug
+        if (!mounted) return;
         if (user != null) {
           final allergensMap =
               jsonDecode(user['allergens'] ?? '{}') as Map<String, dynamic>;
@@ -71,45 +71,45 @@ class _OcrScreenState extends State<OcrScreen> {
                 .where((entry) => entry.value == true)
                 .map((entry) => entry.key)
                 .toList();
+            _otherAllergens =
+                AllergenMatcher.parseOtherAllergens(user['otherAllergens']);
           });
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('User data not found')),
           );
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const LoginScreen()),
-          );
+          navigateToLogin(context);
         }
       } catch (e) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error loading allergens: $e')),
         );
       }
     } else {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No logged-in user found')),
       );
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => const LoginScreen()),
-      );
+      navigateToLogin(context);
     }
   }
 
   Future<void> _pickImage(ImageSource source) async {
     try {
       final pickedFile = await _picker.pickImage(source: source);
-      if (pickedFile != null) {
+      if (pickedFile != null && mounted) {
         setState(() {
           _image = pickedFile;
-          _recognizedText = '';
           _productName = '';
           _foundAllergens = [];
+          _mayContainAllergens = [];
+          _status = ScanStatus.idle;
         });
         await _performOcr();
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error picking image: $e')),
       );
@@ -124,12 +124,11 @@ class _OcrScreenState extends State<OcrScreen> {
       final RecognizedText recognizedText =
           await _textRecognizer.processImage(inputImage);
 
-      // Detect allergens in recognized text
-      final text = recognizedText.text.toLowerCase();
-      final foundAllergens = _userAllergens.where((allergen) {
-        final synonyms = _allergenSynonyms[allergen] ?? [allergen];
-        return synonyms.any((synonym) => text.contains(synonym.toLowerCase()));
-      }).toList();
+      final result = AllergenMatcher.match(
+        recognizedText.text,
+        allergens: _userAllergens,
+        otherAllergens: _otherAllergens,
+      );
 
       // Extract product name
       String productName = 'Unknown Product';
@@ -140,37 +139,89 @@ class _OcrScreenState extends State<OcrScreen> {
         }
       }
 
-      // Create Scan object
-      final scan = Scan(
-        productName: productName,
-        allergensFound: foundAllergens,
-        scanDate: DateTime.now(),
-      );
-
+      if (!mounted) return;
       setState(() {
-        _recognizedText = recognizedText.text;
-        _foundAllergens = foundAllergens;
+        _foundAllergens = result.contains;
+        _mayContainAllergens = result.mayContain;
         _productName = productName;
+        _status = _statusFor(result);
       });
 
-      // Text-to-speech
-      final prefs = await SharedPreferences.getInstance();
-      final ttsEnabled = prefs.getBool('textToSpeechEnabled') ?? true;
-      if (ttsEnabled) {
-        final tts = FlutterTts();
-        await tts.setLanguage('en-US');
-        await tts.setSpeechRate(0.5);
-        await tts.speak(foundAllergens.isEmpty
-            ? 'Safe: No allergens detected in $productName'
-            : 'Warning: Found ${foundAllergens.join(", ")} in scanned product!');
+      // Only keep scans whose result can be trusted
+      if (_status == ScanStatus.safe ||
+          _status == ScanStatus.caution ||
+          _status == ScanStatus.danger) {
+        await saveScan(Scan(
+          productName: productName,
+          allergensFound: result.contains,
+          mayContain: result.mayContain,
+          scanDate: DateTime.now(),
+        ));
       }
 
-      // Save scan
-      await saveScan(scan);
+      if (AppSettings.instance.textToSpeechEnabled && mounted) {
+        await _tts.setLanguage('en-US');
+        await _tts.setSpeechRate(0.5);
+        await _tts.speak(_resultMessage());
+      }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error processing image: $e')),
       );
+    }
+  }
+
+  ScanStatus _statusFor(AllergenMatchResult result) {
+    if (_userAllergens.isEmpty && _otherAllergens.isEmpty) {
+      return ScanStatus.noProfile;
+    }
+    if (!result.isReadable) return ScanStatus.unreadable;
+    if (result.contains.isNotEmpty) return ScanStatus.danger;
+    if (result.mayContain.isNotEmpty) return ScanStatus.caution;
+    if (!result.hasIngredientList) return ScanStatus.noIngredientList;
+    return ScanStatus.safe;
+  }
+
+  String _resultMessage() {
+    switch (_status) {
+      case ScanStatus.idle:
+        return 'Take or choose a photo of the ingredient list.';
+      case ScanStatus.noProfile:
+        return 'You have not set any allergens yet. '
+            'Add them in your allergen profile before scanning.';
+      case ScanStatus.unreadable:
+        return 'Could not read the label. Retake the photo with the '
+            'ingredient list well lit and in focus.';
+      case ScanStatus.noIngredientList:
+        return 'No allergens found, but no ingredient list was detected. '
+            'Make sure the photo shows the ingredients.';
+      case ScanStatus.danger:
+        final mayAlso = _mayContainAllergens.isEmpty
+            ? ''
+            : ' May also contain ${_mayContainAllergens.join(", ")}.';
+        return 'Warning: Contains ${_foundAllergens.join(", ")}.$mayAlso';
+      case ScanStatus.caution:
+        return 'Caution: May contain ${_mayContainAllergens.join(", ")}.';
+      case ScanStatus.safe:
+        return 'No allergens from your profile detected in $_productName. '
+            'Always double-check the label.';
+    }
+  }
+
+  Color _resultColor(ColorScheme colorScheme) {
+    switch (_status) {
+      case ScanStatus.idle:
+        return colorScheme.onSurface;
+      case ScanStatus.safe:
+        return colorScheme.primary;
+      case ScanStatus.caution:
+      case ScanStatus.noIngredientList:
+        return Colors.orange.shade900;
+      case ScanStatus.noProfile:
+      case ScanStatus.unreadable:
+      case ScanStatus.danger:
+        return colorScheme.error;
     }
   }
 
@@ -181,80 +232,31 @@ class _OcrScreenState extends State<OcrScreen> {
 
     if (email != null) {
       try {
-        // Save to database
-        final db = await DatabaseHelper.instance.database;
-        await db.insert('scans', {
-          'userEmail': email,
-          'productName': scan.productName,
-          'allergensFound': jsonEncode(scan.allergensFound),
-          'scanDate': scan.scanDate.toIso8601String(),
-        });
-
-        // Save to SharedPreferences
-        final scansJson = prefs.getString('recentScans');
-        List<Scan> scans = [];
-        if (scansJson != null) {
-          final List<dynamic> scansList = jsonDecode(scansJson);
-          scans = scansList
-              .map((json) => Scan.fromJson(json))
-              .where((scan) => scan != null) // Ensure no null scans
-              .toList();
-        }
-        scans.insert(0, scan);
-        if (scans.length > 10) {
-          scans = scans.sublist(0, 10);
-        }
-        await prefs.setString(
-          'recentScans',
-          jsonEncode(scans
-              .where((s) => s != null) // Extra safety for serialization
-              .map((s) => s.toJson())
-              .toList()),
-        );
+        await DatabaseHelper.instance.insertScan(scan.toRow(email));
       } catch (e) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error saving scan: $e')),
         );
       }
     } else {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No logged-in user found')),
       );
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => const LoginScreen()),
-      );
+      navigateToLogin(context);
     }
   }
 
+  // Home is always underneath this screen, so go back instead of
+  // stacking another copy of it.
   void _navigateToHome() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => const HomeScreen()),
-    );
+    Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = ColorScheme.fromSwatch(
-      primarySwatch: MaterialColor(
-        0xFF6994C6,
-        {
-          50: const Color(0xFFE6ECF5),
-          100: const Color(0xFFC3D3E7),
-          200: const Color(0xFF9CB7D8),
-          300: const Color(0xFF759BC8),
-          400: const Color(0xFF6994C6),
-          500: const Color(0xFF5A85B9),
-          600: const Color(0xFF5278A8),
-          700: const Color(0xFF486895),
-          800: const Color(0xFF3E5983),
-          900: const Color(0xFF2E4163),
-        },
-      ),
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      errorColor: Theme.of(context).colorScheme.error,
-    );
+    final colorScheme = Theme.of(context).colorScheme;
 
     return Theme(
       data: Theme.of(context).copyWith(colorScheme: colorScheme),
@@ -390,12 +392,11 @@ class _OcrScreenState extends State<OcrScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Checking for: ${_userAllergens.isEmpty ? "No allergens set" : _userAllergens.join(", ")}',
+                'Checking for: ${_userAllergens.isEmpty && _otherAllergens.isEmpty ? "No allergens set" : [..._userAllergens, ..._otherAllergens].join(", ")}',
                 style: TextStyle(
                   fontFamily: 'GlacialIndifference',
                   color: colorScheme.onSurface,
                 ),
-                semanticsLabel: 'Allergens Being Checked',
               ),
               const SizedBox(height: 8),
               Text(
@@ -404,23 +405,18 @@ class _OcrScreenState extends State<OcrScreen> {
                   fontFamily: 'GlacialIndifference',
                   color: colorScheme.onSurface,
                 ),
-                semanticsLabel: 'Product Name',
               ),
               const SizedBox(height: 8),
-              Text(
-                _foundAllergens.isEmpty
-                    ? 'Safe: No allergens detected'
-                    : 'Warning: Found ${_foundAllergens.join(", ")}',
-                style: TextStyle(
-                  fontFamily: 'GlacialIndifference',
-                  color: _foundAllergens.isEmpty
-                      ? colorScheme.primary
-                      : colorScheme.error,
-                  fontWeight: FontWeight.bold,
+              Semantics(
+                liveRegion: true,
+                child: Text(
+                  _resultMessage(),
+                  style: TextStyle(
+                    fontFamily: 'GlacialIndifference',
+                    color: _resultColor(colorScheme),
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-                semanticsLabel: _foundAllergens.isEmpty
-                    ? 'Safe No Allergens'
-                    : 'Warning Allergens Found',
               ),
               const SizedBox(height: 20),
               // Back to Home Button

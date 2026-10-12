@@ -1,6 +1,5 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
-import 'dart:convert';
 
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
@@ -26,7 +25,7 @@ class DatabaseHelper {
     try {
       return await openDatabase(
         path,
-        version: 5, // Increment to force upgrade
+        version: 6, // Increment to force upgrade
         onCreate: _createDB,
         onUpgrade: _upgradeDB,
         onOpen: (db) async {
@@ -55,15 +54,7 @@ class DatabaseHelper {
         otherAllergens TEXT
       )
       ''');
-      await db.execute('''
-      CREATE TABLE scans (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        userEmail TEXT NOT NULL,
-        productName TEXT NOT NULL,
-        allergensFound TEXT,
-        scanDate TEXT NOT NULL
-      )
-      ''');
+      await _createScansTable(db);
       print('Database created with signup and scans tables');
     } catch (e) {
       print('Error creating database: $e');
@@ -74,26 +65,48 @@ class DatabaseHelper {
   Future<void> _upgradeDB(Database db, int oldVersion, int newVersion) async {
     try {
       print('Upgrading database from version $oldVersion to $newVersion');
-      if (oldVersion > 2) {
-        await db.execute('''
-        CREATE TABLE scans (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          userEmail TEXT NOT NULL,
-          productName TEXT NOT NULL,
-          allergensFound TEXT,
-          scanDate TEXT NOT NULL
-        )
-        ''');
-        print('Added scans table in upgrade to version 2');
-      }
-      if (oldVersion < 3) {
-        // Placeholder for future upgrades
-        print('Performed upgrade to version 3 (no changes needed)');
+      // Older versions may or may not have the scans table, so check
+      // instead of relying on the version number.
+      await _createScansTable(db);
+      final columns = await db.rawQuery('PRAGMA table_info(scans)');
+      if (!columns.any((column) => column['name'] == 'mayContain')) {
+        await db.execute('ALTER TABLE scans ADD COLUMN mayContain TEXT');
       }
     } catch (e) {
       print('Error upgrading database: $e');
       rethrow;
     }
+  }
+
+  Future<void> _createScansTable(Database db) async {
+    await db.execute('''
+    CREATE TABLE IF NOT EXISTS scans (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      userEmail TEXT NOT NULL,
+      productName TEXT NOT NULL,
+      allergensFound TEXT,
+      mayContain TEXT,
+      scanDate TEXT NOT NULL
+    )
+    ''');
+  }
+
+  Future<void> insertScan(Map<String, dynamic> row) async {
+    final db = await database;
+    await db.insert('scans', row);
+  }
+
+  /// Most recent scans for one user, newest first.
+  Future<List<Map<String, dynamic>>> getRecentScans(String email,
+      {int limit = 10}) async {
+    final db = await database;
+    return db.query(
+      'scans',
+      where: 'userEmail = ?',
+      whereArgs: [email],
+      orderBy: 'scanDate DESC',
+      limit: limit,
+    );
   }
 
   Future<void> insertSignUpData(Map<String, dynamic> data) async {

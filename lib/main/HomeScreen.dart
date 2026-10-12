@@ -9,30 +9,50 @@ import '../auth/login.dart';
 import '../ocr/ocr.dart';
 import 'ProfileScreen.dart';
 import 'SettingsScreen.dart';
-import 'AllergenProfiling.dart'; // Import new screen
 import '../helpers/databaseHelper.dart';
 
 class Scan {
   final String productName;
   final List<String> allergensFound;
+  final List<String> mayContain;
   final DateTime scanDate;
 
   Scan({
     required this.productName,
     required this.allergensFound,
+    this.mayContain = const [],
     required this.scanDate,
   });
 
   Map<String, dynamic> toJson() => {
         'productName': productName,
         'allergensFound': allergensFound,
+        'mayContain': mayContain,
         'scanDate': scanDate.toIso8601String(),
       };
 
   factory Scan.fromJson(Map<String, dynamic> json) => Scan(
         productName: json['productName'],
         allergensFound: List<String>.from(json['allergensFound']),
+        mayContain: List<String>.from(json['mayContain'] ?? const []),
         scanDate: DateTime.parse(json['scanDate']),
+      );
+
+  /// Row for the `scans` table; list fields are stored as JSON.
+  Map<String, dynamic> toRow(String userEmail) => {
+        'userEmail': userEmail,
+        'productName': productName,
+        'allergensFound': jsonEncode(allergensFound),
+        'mayContain': jsonEncode(mayContain),
+        'scanDate': scanDate.toIso8601String(),
+      };
+
+  factory Scan.fromRow(Map<String, dynamic> row) => Scan(
+        productName: row['productName'],
+        allergensFound:
+            List<String>.from(jsonDecode(row['allergensFound'] ?? '[]')),
+        mayContain: List<String>.from(jsonDecode(row['mayContain'] ?? '[]')),
+        scanDate: DateTime.parse(row['scanDate']),
       );
 }
 
@@ -56,7 +76,6 @@ class _HomeScreenState extends State<HomeScreen> {
     'Gluten can hide in sauces and dressings.',
     'Always verify "allergen-free" claims.',
   ];
-  int _selectedIndex = 0;
 
   @override
   void initState() {
@@ -74,11 +93,12 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadUserData() async {
     final prefs = await SharedPreferences.getInstance();
     final email = prefs.getString('loggedInEmail');
-    final scansJson = prefs.getString('recentScans');
 
     if (email != null) {
       try {
         final user = await DatabaseHelper.instance.getUserByEmail(email);
+        final scanRows = await DatabaseHelper.instance.getRecentScans(email);
+        if (!mounted) return;
         if (user != null) {
           final allergensMap =
               jsonDecode(user['allergens'] ?? '{}') as Map<String, dynamic>;
@@ -91,11 +111,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _firstName = user['firstName'];
             _userAllergens =
                 selectedAllergens.isNotEmpty ? selectedAllergens : ['None'];
-            if (scansJson != null) {
-              final List<dynamic> scansList = jsonDecode(scansJson);
-              _recentScans =
-                  scansList.map((json) => Scan.fromJson(json)).toList();
-            }
+            _recentScans = scanRows.map(Scan.fromRow).toList();
             _currentTip = _tips[_currentTipIndex];
           });
         } else {
@@ -105,6 +121,7 @@ class _HomeScreenState extends State<HomeScreen> {
           _logout();
         }
       } catch (e) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error loading user data: $e')),
         );
@@ -124,27 +141,27 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _logout() async {
+    // Only end the session; settings and "Remember Me" stay on the device.
     final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
-      (Route<dynamic> route) => false,
-    );
+    await prefs.remove('loggedInEmail');
+    if (!mounted) return;
+    navigateToLogin(context);
   }
 
+  // Home stays the selected tab; other tabs open on top of it and
+  // refresh Home's data when they close.
   void _onScanPressed() {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => OcrScreen()),
-    );
+      MaterialPageRoute(builder: (context) => const OcrScreen()),
+    ).then((_) => _loadUserData());
   }
 
   void _onProfilePressed() {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const ProfileScreen()),
-    );
+    ).then((_) => _loadUserData());
   }
 
   void _onSettingsPressed() {
@@ -168,9 +185,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _onNavBarTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
     switch (index) {
       case 0:
         break;
@@ -188,29 +202,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = ColorScheme.fromSwatch(
-      primarySwatch: MaterialColor(
-        0xFF6994C6,
-        {
-          50: const Color(0xFFE6ECF5),
-          100: const Color(0xFFC3D3E7),
-          200: const Color(0xFF9CB7D8),
-          300: const Color(0xFF759BC8),
-          400: const Color(0xFF6994C6),
-          500: const Color(0xFF5A85B9),
-          600: const Color(0xFF5278A8),
-          700: const Color(0xFF486895),
-          800: const Color(0xFF3E5983),
-          900: const Color(0xFF2E4163),
-        },
-      ),
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      errorColor: Theme.of(context).colorScheme.error,
-    );
+    final colorScheme = Theme.of(context).colorScheme;
 
-    final bool hasRiskyScan = _recentScans.isNotEmpty &&
-        _recentScans.first.allergensFound
-            .any((allergen) => _userAllergens.contains(allergen));
+    // Scans only record allergens from the user's profile at scan time.
+    final bool hasRiskyScan =
+        _recentScans.isNotEmpty && _recentScans.first.allergensFound.isNotEmpty;
 
     return Theme(
       data: Theme.of(context).copyWith(colorScheme: colorScheme),
@@ -271,7 +267,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     color: colorScheme.onSurface,
                   ),
                 ),
-                selected: _selectedIndex == 0,
+                selected: true,
                 selectedTileColor: colorScheme.primary.withOpacity(0.1),
                 onTap: () {
                   Navigator.pop(context);
@@ -288,8 +284,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     color: colorScheme.onSurface,
                   ),
                 ),
-                selected: _selectedIndex == 2,
-                selectedTileColor: colorScheme.primary.withOpacity(0.1),
                 onTap: () {
                   Navigator.pop(context);
                   _onNavBarTapped(2);
@@ -305,8 +299,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     color: colorScheme.onSurface,
                   ),
                 ),
-                selected: _selectedIndex == 3,
-                selectedTileColor: colorScheme.primary.withOpacity(0.1),
                 onTap: () {
                   Navigator.pop(context);
                   _onNavBarTapped(3);
@@ -517,16 +509,20 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                             subtitle: Text(
-                              'Allergens: ${scan.allergensFound.isEmpty ? "None" : scan.allergensFound.join(", ")}\nScanned: ${DateFormat('MMM d, yyyy').format(scan.scanDate)}',
+                              'Allergens: ${scan.allergensFound.isEmpty ? "None" : scan.allergensFound.join(", ")}'
+                              '${scan.mayContain.isEmpty ? "" : "\nMay contain: ${scan.mayContain.join(", ")}"}'
+                              '\nScanned: ${DateFormat('MMM d, yyyy').format(scan.scanDate)}',
                               style: const TextStyle(
                                 fontFamily: 'GlacialIndifference',
                               ),
                             ),
-                            trailing: scan.allergensFound
-                                    .any((a) => _userAllergens.contains(a))
+                            trailing: scan.allergensFound.isNotEmpty
                                 ? Icon(Icons.warning, color: colorScheme.error)
-                                : Icon(Icons.check_circle,
-                                    color: colorScheme.primary),
+                                : scan.mayContain.isNotEmpty
+                                    ? Icon(Icons.warning_amber,
+                                        color: Colors.orange.shade900)
+                                    : Icon(Icons.check_circle,
+                                        color: colorScheme.primary),
                           ),
                         );
                       },
@@ -592,7 +588,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         bottomNavigationBar: BottomNavigationBar(
-          currentIndex: _selectedIndex,
+          currentIndex: 0,
           selectedItemColor: colorScheme.primary,
           unselectedItemColor: colorScheme.onSurface.withOpacity(0.6),
           selectedLabelStyle:
