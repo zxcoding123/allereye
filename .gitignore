@@ -1,0 +1,77 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.buildlog/
+.history
+.svn/
+migrate_working_dir/
+
+# IntelliJ IDEA / Android Studio
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# Visual Studio Code
+.vscode/
+
+# Flutter / Dart / Pub
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+ephemeral/
+
+# Android specific
+**/android/app/debug
+**/android/app/profile
+**/android/app/release
+**/android/app/src/debug/libs
+**/android/app/src/profile/libs
+**/android/app/src/release/libs
+**/android/app/src/main/assets
+**/android/app/src/main/jniLibs
+**/android/app/src/main/obj
+**/android/app/src/main/libs
+**/android/app/src/main/resources
+**/android/app/src/main/res/values/strings.xml
+**/android/captures/
+**/android/gradle/
+**/android/gradlew
+**/android/gradlew.bat
+**/android/local.properties
+**/android/key.properties
+**/android/app/google-services.json
+
+# iOS specific
+**/ios/Flutter/App.framework
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/app.flx
+**/ios/Flutter/app.zip
+**/ios/Flutter/flutter_assets/
+**/ios/ServiceDefinitions.json
+**/ios/Runner/GeneratedPluginRegistrant.*
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/profile
+**/ios/debug
+**/ios/release
+**/ios/Runner/GoogleService-Info.plist
+
+# Web specific
+**/web/version.json
+
+# Coverage reports
+coverage/
+
+# Sensitive data / Environment variables
+.env
